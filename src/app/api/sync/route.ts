@@ -1,9 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
-// Initialize Supabase Client
-// It tries to use the Service Role Key (God Mode) first, 
-// but falls back to the Anon Key (Public) if not set.
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -11,41 +8,48 @@ const supabase = createClient(
 
 export async function GET() {
   try {
-    console.log('Initiating Handshake with Supabase...');
-
-    // The Handshake: Select everything from the Twins table
+    // Fetch the Architect Twin + all relations
     const { data, error } = await supabase
       .from('twins')
-      .select('*');
+      .select(`
+        *,
+        ontology_identity (*),
+        ontology_trajectory (*),
+        swarm_agents (*),
+        blockers (*)
+      `)
+      .eq('twin_id', 'architect_godly')
+      .single();
 
-    if (error) {
-      console.error('Supabase Connection Error:', error);
-      return NextResponse.json(
-        { 
-          error: 'Handshake Failed', 
-          message: 'Check your Supabase URL and Keys in Vercel.',
-          details: error.message 
-        },
-        { status: 500 }
-      );
-    }
+    if (error) throw error;
 
-    // Success: Return the raw data
-    return NextResponse.json(
-      { 
-        status: 'CONNECTED',
-        message: 'God Mode handshake successful.',
-        timestamp: new Date().toISOString(),
-        twins_found: data.length,
-        data: data 
-      },
-      { status: 200 }
-    );
+    // Fetch metrics separately
+    const { data: metricsData } = await supabase
+      .from('metrics')
+      .select('*')
+      .eq('twin_id', data.id);
+
+    // Transform metrics into a flat object
+    const metricsObj = metricsData?.reduce((acc, item) => {
+      acc[item.key] = item.value; 
+      return acc;
+    }, {} as Record<string, any>);
+
+    // Return the data structure exactly how the UI expects it
+    return NextResponse.json({
+      id: data.twin_id,
+      name: data.name,
+      type: data.type,
+      status: data.status,
+      identity: data.ontology_identity,
+      trajectory: data.ontology_trajectory || [],
+      swarm: data.swarm_agents || [],
+      blockers: data.blockers || [],
+      metrics: metricsObj || {}
+    });
 
   } catch (err) {
-    return NextResponse.json(
-      { error: 'Internal Server Error', details: err },
-      { status: 500 }
-    );
+    console.error(err);
+    return NextResponse.json({ error: 'Connection Failed' }, { status: 500 });
   }
 }
